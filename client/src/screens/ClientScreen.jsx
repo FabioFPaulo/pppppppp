@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import React, { useCallback, useEffect, useRef } from "react";
 import { io } from "socket.io-client";
 
 export default function ClientScreen() {
@@ -17,31 +17,51 @@ export default function ClientScreen() {
       peer.current.addTrack(stream.getVideoTracks()[0], stream);
 
       const sdp = await peer.current.createOffer();
-      await peer.current.setLocalDescription(sdp);
-      socket.emit("offer", peer.current.localDescription);
+      peer.current.setLocalDescription(sdp).then(() => {
+        socket.emit("offer", peer.current.localDescription);
+      });
     } catch (error) {
       console.error(error);
     }
   };
 
-  useEffect(() => {
-    // listen to `answer` event
-    socket.on("answer", async (adminSDP) => {
-      peer.current.setRemoteDescription(adminSDP);
-    });
+  const handleSocketAnswer = useCallback(async (adminSDP) => {
+    peer.current.setRemoteDescription(adminSDP);
+  }, []);
 
-    /** Exchange ice candidate */
-    peer.current.addEventListener("icecandidate", (event) => {
+  const handleSocketIceCandidate = useCallback(async (candidate) => {
+    // get candidate from admin
+    await peer.current.addIceCandidate(new RTCIceCandidate(candidate));
+  }, []);
+
+  const handlePeerIceCandidate = useCallback(
+    (event) => {
       if (event.candidate) {
         // send the candidate to admin
         socket.emit("icecandidate", event.candidate);
       }
-    });
-    socket.on("icecandidate", async (candidate) => {
-      // get candidate from admin
-      await peer.current.addIceCandidate(new RTCIceCandidate(candidate));
-    });
-  }, [socket]);
+    },
+    [socket]
+  );
+
+  useEffect(() => {
+    // listen to `answer` event
+    socket.on("answer", handleSocketAnswer);
+    socket.on("icecandidate", handleSocketIceCandidate);
+
+    /** Exchange ice candidate */
+    peer.current.addEventListener("icecandidate", handlePeerIceCandidate);
+
+    return () => {
+      socket.off("answer", handleSocketAnswer);
+      socket.off("icecandidate", handleSocketIceCandidate);
+    };
+  }, [
+    socket,
+    handleSocketAnswer,
+    handleSocketIceCandidate,
+    handlePeerIceCandidate,
+  ]);
 
   return (
     <div>

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
 import ReactPlayer from "react-player";
 
@@ -14,29 +14,51 @@ export default function AdminScreen() {
     });
   }, []);
 
-  useEffect(() => {
-    // listen to `offer` event from client (actually from server)
-    socket.on("offer", async (clientSDP) => {
+  const handleSocketOffer = useCallback(
+    async (clientSDP) => {
       await peer.current.setRemoteDescription(clientSDP);
 
       // create an answer and send the answer to client
-      const sdp = await peer.createAnswer();
+      const sdp = await peer.current.createAnswer();
       await peer.current.setLocalDescription(sdp);
       socket.emit("answer", peer.current.localDescription);
-    });
+    },
+    [socket]
+  );
 
-    /** Exchange ice candidate */
-    peer.current.addEventListener("icecandidate", (event) => {
+  const handlePeerIceCandidate = useCallback(
+    (event) => {
       if (event.candidate) {
         // send the candidate to client
         socket.emit("icecandidate", event.candidate);
       }
-    });
-    socket.on("icecandidate", async (candidate) => {
-      // get candidate from client
-      await peer.current.addIceCandidate(new RTCIceCandidate(candidate));
-    });
-  }, [socket]);
+    },
+    [socket]
+  );
+
+  const handleSocketIceCandidate = useCallback(async (candidate) => {
+    // get candidate from client
+    await peer.current.addIceCandidate(new RTCIceCandidate(candidate));
+  }, []);
+
+  useEffect(() => {
+    // listen to `offer` event from client (actually from server)
+    socket.on("offer", handleSocketOffer);
+    socket.on("icecandidate", handleSocketIceCandidate);
+
+    /** Exchange ice candidate */
+    peer.current.addEventListener("icecandidate", handlePeerIceCandidate);
+
+    return () => {
+      socket.off("offer", handleSocketOffer);
+      socket.off("icecandidate", handleSocketIceCandidate);
+    };
+  }, [
+    socket,
+    handleSocketOffer,
+    handleSocketIceCandidate,
+    handlePeerIceCandidate,
+  ]);
   return (
     <div>
       {stream && <ReactPlayer url={stream} playing controls={false} muted />}
